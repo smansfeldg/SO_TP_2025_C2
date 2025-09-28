@@ -33,7 +33,8 @@ void generator_signal_handler(int sig) {
  * @return: Número de IDs asignados, 0 si no hay más IDs
  */
 int request_id_block(shared_memory_t *shared_mem, int sem_id, int *start_id, int *end_id) {
-    /* Solicitar acceso a memoria compartida */
+    /* Obtener acceso exclusivo a la memoria compartida */
+    sem_wait(sem_id, SEM_GENERATOR);
     sem_wait(sem_id, SEM_MUTEX);
     
     /* Preparar solicitud */
@@ -46,11 +47,13 @@ int request_id_block(shared_memory_t *shared_mem, int sem_id, int *start_id, int
     sem_post(sem_id, SEM_COORDINATOR);
     
     /* Esperar respuesta del coordinador */
-    sem_wait(sem_id, SEM_GENERATOR);
+    sem_wait(sem_id, SEM_COORDINATOR);
     sem_wait(sem_id, SEM_MUTEX);
     
     if (shared_mem->data.request.action == NO_MORE_IDS) {
         sem_post(sem_id, SEM_MUTEX);
+        /* Liberar el token para el siguiente generador */
+        sem_post(sem_id, SEM_GENERATOR);
         printf("Generador PID %d: No hay más IDs disponibles\n", my_pid);
         return 0;
     }
@@ -60,6 +63,7 @@ int request_id_block(shared_memory_t *shared_mem, int sem_id, int *start_id, int
     *end_id = shared_mem->data.request.end_id;
     
     sem_post(sem_id, SEM_MUTEX);
+    /* NO liberar SEM_GENERATOR aquí - mantener acceso exclusivo durante envío de registros */
     
     printf("Generador PID %d: Recibidos IDs %d-%d\n", my_pid, *start_id, *end_id);
     return (*end_id - *start_id + 1);
@@ -73,7 +77,7 @@ int request_id_block(shared_memory_t *shared_mem, int sem_id, int *start_id, int
  * @return: 0 si exitoso, -1 en error
  */
 int send_record(shared_memory_t *shared_mem, int sem_id, const record_t *record) {
-    /* Esperar acceso a memoria compartida */
+    /* Ya tenemos acceso exclusivo desde request_id_block() */
     sem_wait(sem_id, SEM_MUTEX);
     
     /* Copiar registro a memoria compartida */
@@ -84,8 +88,8 @@ int send_record(shared_memory_t *shared_mem, int sem_id, const record_t *record)
     sem_post(sem_id, SEM_MUTEX);
     sem_post(sem_id, SEM_COORDINATOR);
     
-    /* Esperar confirmación del coordinador antes de continuar */
-    sem_wait(sem_id, SEM_GENERATOR);
+    /* Esperar confirmación del coordinador */
+    sem_wait(sem_id, SEM_COORDINATOR);
     
     return 0;
 }
@@ -165,6 +169,9 @@ void generator_main_loop(shared_memory_t *shared_mem, int sem_id) {
             /* Pequeña pausa para simular trabajo */
             usleep(10000); /* 10ms para simular trabajo realista */
         }
+        
+        /* Liberar el token de acceso exclusivo después de procesar todos los IDs del bloque */
+        sem_post(sem_id, SEM_GENERATOR);
     }
     
     printf("Generador PID %d terminado. Total enviados: %d registros\n", 

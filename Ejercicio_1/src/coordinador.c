@@ -319,17 +319,20 @@ void coordinator_main_loop(shared_memory_t *shared_mem, int sem_id) {
             /* Asignar bloque de IDs */
             printf("DEBUG: Procesando solicitud de IDs de proceso %d\n", shared_mem->data.request.process_id);
             assign_id_block(shared_mem);
+            /* Notificar al generador que la respuesta está lista */
+            sem_post(sem_id, SEM_COORDINATOR);
         } else if (shared_mem->status == SEND_RECORD) {
             /* Procesar registro */
             printf("DEBUG: Procesando registro ID %d de proceso %d\n", 
                    shared_mem->data.record.id, shared_mem->data.record.process_id);
             process_record(shared_mem);
+            /* Notificar al generador que el registro fue procesado */
+            sem_post(sem_id, SEM_COORDINATOR);
         } else {
             printf("DEBUG: Estado de memoria compartida desconocido: %d\n", shared_mem->status);
         }
         
         sem_post(sem_id, SEM_MUTEX);
-        sem_post(sem_id, SEM_GENERATOR);
     }
     
     printf("Coordinador terminando bucle principal.\n");
