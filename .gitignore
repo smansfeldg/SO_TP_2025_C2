@@ -1,0 +1,256 @@
+# Gitignore para Proyecto de Sistemas Operativos en C
+# Sistema Generador de Datos Concurrente
+
+# ============================================================================
+# ARCHIVOS COMPILADOS Y BINARIOS
+# ============================================================================
+
+# Archivos objeto
+*.o
+*.obj
+*.elf
+
+# Archivos compilados
+*.com
+*.class
+*.dll
+*.exe
+*.so
+*.so.*
+*.dylib
+
+# Ejecutables específicos del proyecto
+coordinador
+generador
+
+# Archivos de depuración
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Bibliotecas estáticas
+*.lib
+*.a
+*.la
+*.lo
+
+# Bibliotecas compartidas
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# ============================================================================
+# DIRECTORIOS DE COMPILACIÓN
+# ============================================================================
+
+# Directorio de objetos (puede ser recreado)
+obj/
+build/
+bin/
+target/
+
+# Directorios de CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile.bak
+
+# ============================================================================
+# ARCHIVOS GENERADOS POR EL PROGRAMA
+# ============================================================================
+
+# Archivo CSV de salida del programa
+datos_generados.csv
+*.csv
+
+# Archivos de log
+*.log
+*.out
+
+# Archivos temporales del programa
+temp_*
+tmp_*
+
+# ============================================================================
+# ARCHIVOS DE RESPALDO Y TEMPORALES
+# ============================================================================
+
+# Archivos de respaldo de editores
+*~
+*.swp
+*.swo
+*#
+.#*
+
+# Archivos temporales de vim
+*.tmp
+*.temp
+.*.swp
+.*.swo
+
+# Archivos temporales de emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Archivos de VSCode
+.vscode/
+*.code-workspace
+
+# Archivos de CLion/IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# ============================================================================
+# ARCHIVOS DEL SISTEMA OPERATIVO
+# ============================================================================
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ============================================================================
+# HERRAMIENTAS DE DESARROLLO
+# ============================================================================
+
+# Archivos de core dump
+core
+core.*
+vgcore.*
+
+# Archivos de Valgrind
+*.valgrind
+vgdump.*
+
+# Archivos de GDB
+.gdb_history
+gdb.txt
+
+# Archivos de coverage
+*.gcda
+*.gcno
+*.gcov
+lcov.info
+coverage/
+
+# Archivos de profiling
+gmon.out
+*.prof
+
+# ============================================================================
+# RECURSOS IPC (solo para documentación - no se pueden versionar)
+# ============================================================================
+
+# Nota: Los recursos IPC como memoria compartida y semáforos
+# no son archivos en el filesystem, pero documentamos las claves:
+# - Memoria compartida: clave 0x1234
+# - Semáforos: clave 0x5678
+
+# ============================================================================
+# ARCHIVOS DE PRUEBA Y DESARROLLO
+# ============================================================================
+
+# Archivos de prueba temporales
+test_output/
+test_*.txt
+prueba_*
+
+# Archivos de benchmark
+benchmark_*
+performance_*
+
+# Datos de prueba grandes
+*.dat
+big_test_*
+
+# ============================================================================
+# DOCUMENTACIÓN GENERADA
+# ============================================================================
+
+# Doxygen
+html/
+latex/
+man/
+rtf/
+
+# ============================================================================
+# ARCHIVOS ESPECÍFICOS DEL PROYECTO
+# ============================================================================
+
+# Configuraciones locales
+local_config.*
+.env
+.env.local
+
+# Archivos de estadísticas personalizadas
+stats_*
+metrics_*
+
+# Archivos de timing/performance
+timing_*
+perf_*
+
+# ============================================================================
+# EXCEPCIONES - ARCHIVOS QUE SÍ QUEREMOS VERSIONAR
+# ============================================================================
+
+# Asegurar que estos archivos importantes SÍ se incluyan
+!Makefile
+!*.mk
+!run_test.sh
+!verify.awk
+!README.md
+!*.md
+
+# Headers y sources siempre se incluyen
+!src/
+!include/
+!*.c
+!*.h
+
+# Scripts de configuración
+!configure
+!config.sh
+!setup.sh
