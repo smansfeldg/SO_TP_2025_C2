@@ -46,3 +46,11 @@ El archivo `datos_generados.csv` contendrá:
 * **Lote de Prueba:** Se entregará un script de shell (`run_test.sh`) que ejecuta el sistema con parámetros de ejemplo. [cite_start]Además, se incluirá un script **`verify.awk`** que analizará el CSV resultante para verificar que los IDs sean correlativos y no existan duplicados, cumpliendo con el criterio de corrección[cite: 14, 42].
 * [cite_start]**Documentación de Monitoreo:** Se adjuntará un breve informe con capturas de pantalla de herramientas como `ps`, `htop`, `vmstat` e `ipcs` para evidenciar la creación de procesos, el estado de la memoria compartida y la concurrencia del sistema[cite: 15, 39].
 * [cite_start]**Empaquetado Final:** Todo el material (código fuente, makefile, scripts e informe) será entregado en un único archivo comprimido **ZIP**[cite: 16].
+
+### **5. Recursos y Herramientas**
+* **Lenguaje de Programación:** C
+* **Compilador:** GCC
+* **Sistema de Control de Versiones:** Git
+* **Herramientas de Monitoreo:** ps, htop, vmstat, ipcs
+* **Entorno de Desarrollo:** Linux (preferentemente Ubuntu 22.04)
+* **Comando de compilación:** `make`
