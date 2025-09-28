@@ -34,7 +34,6 @@ void generator_signal_handler(int sig) {
  */
 int request_id_block(shared_memory_t *shared_mem, int sem_id, int *start_id, int *end_id) {
     /* Solicitar acceso a memoria compartida */
-    sem_wait(sem_id, SEM_GENERATOR);
     sem_wait(sem_id, SEM_MUTEX);
     
     /* Preparar solicitud */
@@ -42,9 +41,9 @@ int request_id_block(shared_memory_t *shared_mem, int sem_id, int *start_id, int
     shared_mem->data.request.action = REQUEST_IDS;
     shared_mem->data.request.process_id = my_pid;
     
-    /* Notificar al coordinador y esperar respuesta */
-    sem_post(sem_id, SEM_COORDINATOR);
+    /* Liberar mutex y notificar al coordinador */
     sem_post(sem_id, SEM_MUTEX);
+    sem_post(sem_id, SEM_COORDINATOR);
     
     /* Esperar respuesta del coordinador */
     sem_wait(sem_id, SEM_GENERATOR);
@@ -75,16 +74,18 @@ int request_id_block(shared_memory_t *shared_mem, int sem_id, int *start_id, int
  */
 int send_record(shared_memory_t *shared_mem, int sem_id, const record_t *record) {
     /* Esperar acceso a memoria compartida */
-    sem_wait(sem_id, SEM_GENERATOR);
     sem_wait(sem_id, SEM_MUTEX);
     
     /* Copiar registro a memoria compartida */
     shared_mem->status = SEND_RECORD;
     memcpy(&shared_mem->data.record, record, sizeof(record_t));
     
-    /* Notificar al coordinador */
-    sem_post(sem_id, SEM_COORDINATOR);
+    /* Liberar mutex y notificar al coordinador */
     sem_post(sem_id, SEM_MUTEX);
+    sem_post(sem_id, SEM_COORDINATOR);
+    
+    /* Esperar confirmación del coordinador antes de continuar */
+    sem_wait(sem_id, SEM_GENERATOR);
     
     return 0;
 }
@@ -100,15 +101,21 @@ void generate_record(record_t *record, int id) {
     record->process_id = my_pid;
     record->timestamp = time(NULL);
     
-    /* Generar datos aleatorios */
-    generate_random_data(record->random_data, MAX_DATA_SIZE);
+    /* Generar datos aleatorios iniciales */
+    generate_random_data(record->random_data, MAX_DATA_SIZE / 2); /* Reservar espacio para prefijo */
     
     /* Agregar información adicional para hacer los datos más únicos */
     char temp_data[MAX_DATA_SIZE];
-    snprintf(temp_data, sizeof(temp_data), "DATA_%d_%ld_%s", 
-             id, record->timestamp, record->random_data);
+    int written = snprintf(temp_data, sizeof(temp_data), "DATA_%d_%ld_%s", 
+                          id, record->timestamp, record->random_data);
     
-    /* Asegurar que no exceda el tamaño máximo */
+    /* Verificar si hubo truncamiento y manejarlo */
+    if (written >= (int)sizeof(temp_data)) {
+        /* Si hay truncamiento, usar solo ID y timestamp */
+        snprintf(temp_data, sizeof(temp_data), "DATA_%d_%ld", id, record->timestamp);
+    }
+    
+    /* Copiar resultado final */
     strncpy(record->random_data, temp_data, MAX_DATA_SIZE - 1);
     record->random_data[MAX_DATA_SIZE - 1] = '\0';
 }
@@ -134,6 +141,7 @@ void generator_main_loop(shared_memory_t *shared_mem, int sem_id) {
         }
         
         /* Generar y enviar registros para cada ID */
+        printf("Generador PID %d: Procesando IDs %d-%d\n", my_pid, start_id, end_id);
         for (int current_id = start_id; current_id <= end_id; current_id++) {
             record_t record;
             
@@ -141,10 +149,12 @@ void generator_main_loop(shared_memory_t *shared_mem, int sem_id) {
             generate_record(&record, current_id);
             
             /* Enviar registro al coordinador */
+            printf("Generador PID %d: Enviando registro ID %d\n", my_pid, current_id);
             if (send_record(shared_mem, sem_id, &record) == 0) {
                 records_sent++;
+                printf("Generador PID %d: Registro ID %d enviado exitosamente\n", my_pid, current_id);
                 
-                if (records_sent % 50 == 0) {
+                if (records_sent % 10 == 0) {
                     printf("Generador PID %d: Enviados %d registros\n", my_pid, records_sent);
                 }
             } else {
@@ -153,7 +163,7 @@ void generator_main_loop(shared_memory_t *shared_mem, int sem_id) {
             }
             
             /* Pequeña pausa para simular trabajo */
-            usleep(1000); /* 1ms */
+            usleep(10000); /* 10ms para simular trabajo realista */
         }
     }
     

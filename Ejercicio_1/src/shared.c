@@ -92,7 +92,11 @@ int get_semaphore(key_t key) {
  */
 void sem_wait(int sem_id, int sem_num) {
     struct sembuf sb = {sem_num, -1, 0};
-    if (semop(sem_id, &sb, 1) == -1) {
+    while (semop(sem_id, &sb, 1) == -1) {
+        if (errno == EINTR) {
+            /* Interrupción por señal, reintentar */
+            continue;
+        }
         perror("Error en sem_wait");
         exit(EXIT_FAILURE);
     }
@@ -105,7 +109,11 @@ void sem_wait(int sem_id, int sem_num) {
  */
 void sem_post(int sem_id, int sem_num) {
     struct sembuf sb = {sem_num, 1, 0};
-    if (semop(sem_id, &sb, 1) == -1) {
+    while (semop(sem_id, &sb, 1) == -1) {
+        if (errno == EINTR) {
+            /* Interrupción por señal, reintentar */
+            continue;
+        }
         perror("Error en sem_post");
         exit(EXIT_FAILURE);
     }
@@ -117,11 +125,21 @@ void sem_post(int sem_id, int sem_num) {
  * @size: Tamaño máximo del buffer
  */
 void generate_random_data(char *buffer, size_t size) {
-    const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    int len = rand() % (size - 1) + 1; /* Longitud entre 1 y size-1 */
+    if (size <= 1) {
+        buffer[0] = '\0';
+        return;
+    }
+    
+    const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+    size_t charset_len = sizeof(charset) - 1;
+    
+    /* Generar longitud apropiada (entre 8 y size-1 para dejar espacio) */
+    int min_len = (size > 16) ? 8 : 1;
+    int max_len = (int)(size - 1);
+    int len = min_len + (rand() % (max_len - min_len + 1));
     
     for (int i = 0; i < len; i++) {
-        buffer[i] = charset[rand() % (sizeof(charset) - 1)];
+        buffer[i] = charset[rand() % charset_len];
     }
     buffer[len] = '\0';
 }
