@@ -1,56 +1,106 @@
-### **Propuesta de Proyecto: Servicio de Base de Datos Transaccional Cliente-Servidor**
+# Servidor y Cliente TCP con Transacciones
 
-#### **1. Resumen Ejecutivo **
-Este proyecto detalla el diseño e implementación de un sistema **cliente-servidor** robusto, conforme a los requisitos del **Ejercicio 2** de la guía. Se desarrollará en **lenguaje C** una aplicación de red que utiliza **sockets TCP/IP** para permitir el acceso remoto y concurrente a un conjunto de datos almacenado en un archivo CSV (generado en el Ejercicio 1). El servidor será capaz de gestionar múltiples clientes de forma simultánea e implementará un mecanismo de **transacciones con bloqueo exclusivo** para garantizar la consistencia e integridad de los datos durante las operaciones de modificación. El sistema se diseñará para ser resiliente ante fallos y configurable mediante parámetros de línea de comandos.
+## Compilación
+```bash
+make all
+```
 
-***
+## Limpieza
+```bash
+# Limpiar ejecutables y archivos temporales
+make clean
 
-#### **2. Objetivos Específicos **
-* **Desarrollar una arquitectura cliente-servidor** funcional utilizando la API de sockets para comunicación a través de una red TCP/IP.
-* **Implementar un servidor concurrente** capaz de atender hasta N clientes de forma simultánea y mantener M peticiones en cola, con N y M configurables al inicio.
-* **Diseñar un protocolo de comunicación** basado en texto para que los clientes puedan realizar consultas (búsquedas, filtros) y operaciones DML (alta, baja, modificación) sobre los datos.
-* **Construir un sistema de transacciones** que permita a un cliente obtener un bloqueo (lock) exclusivo sobre el archivo de datos para realizar múltiples modificaciones de forma atómica.
-* **Asegurar la robustez del sistema**, manejando correctamente cierres inesperados de conexiones y garantizando que el servidor permanezca operativo a la espera de nuevos clientes.
-* **Garantizar la correcta gestión de los recursos del sistema**, liberando sockets, archivos temporales y otros descriptores al finalizar la ejecución.
+# Limpieza completa (incluye logs, cores, etc.)
+make clean-all
 
-***
+# Verificar que no queden recursos abiertos
+make check-resources
+```
 
-#### **3. Arquitectura y Diseño del Sistema **
-El sistema se dividirá en dos componentes principales que se comunican a través de la red.
+## Configuración del Servidor
 
-##### **Componentes del Sistema**
+El servidor lee su configuración desde el archivo `servidor.conf`. Puedes modificar:
 
-* **Servidor (`servidor`):**
-    * **Inicio y Configuración:** Se ejecutará recibiendo por parámetro o archivo de configuración la **dirección IP/hostname y el puerto** de escucha, el número máximo de clientes concurrentes y el tamaño de la cola de espera. Validará estrictamente estos parámetros.
-    * **Gestión de Conexiones:** Utilizará un modelo de concurrencia (ej. `fork()` por cada cliente) para aislar y gestionar cada conexión de cliente en un proceso independiente.
-    * **Lógica de Datos:** Al iniciar, cargará en memoria el contenido del archivo CSV para optimizar las operaciones de consulta. Las modificaciones se persistirán en el archivo tras un `COMMIT` exitoso.
-    * **Manejo de Transacciones:**
-        1.  Al recibir una petición `BEGIN TRANSACTION`, activará un **lock global** (implementado, por ejemplo, con un semáforo o un archivo de bloqueo).
-        2.  Mientras el lock esté activo, todas las peticiones de otros clientes (tanto de consulta como de modificación) serán rechazadas con un mensaje de error apropiado, indicando que deben reintentar más tarde.
-        3.  Al recibir `COMMIT TRANSACTION`, aplicará los cambios al archivo CSV y liberará el lock, permitiendo que otros clientes puedan operar.
-    * **Persistencia:** Permanecerá en ejecución continua, listo para aceptar nuevas conexiones incluso después de que todos los clientes actuales se hayan desconectado.
+- **HOST**: Dirección IP o nombre del host (usar 0.0.0.0 para todas las interfaces)
+- **PORT**: Puerto de escucha
+- **CSV_FILE**: Ruta al archivo CSV de datos
+- **LOG_FILE**: Archivo de log del servidor
 
-* **Cliente (`cliente`):**
-    * **Modo de Operación:** Será una aplicación de consola **interactiva**, que se conectará al servidor especificando su IP y puerto.
-    * **Interfaz de Usuario:** Presentará un *prompt* al usuario, permitiéndole escribir y enviar comandos al servidor de forma manual.
-    * **Comunicación:** Enviará las peticiones del usuario al servidor, esperará la respuesta y la mostrará en pantalla.
-    * **Ciclo de Vida:** Mantendrá la conexión activa hasta que el usuario introduzca un comando específico para salir (ej. `EXIT`).
+## Uso del Servidor
+```bash
+./servidor <clientes_concurrentes> <clientes_en_espera>
+```
 
-##### **Protocolo de Comunicación Propuesto**
-Se definirá un protocolo de texto simple, donde cada comando es una línea de texto.
-* **Consultas:** `GET ID <id>`, `FIND <columna> <operador> <valor>`
-* **Modificaciones:** `INSERT <datos>`, `DELETE ID <id>`, `UPDATE ID <id> SET <columna>=<valor>`
-* **Transacciones:** `BEGIN TRANSACTION`, `COMMIT TRANSACTION`
-* **Control:** `EXIT`
+Ejemplo:
+```bash
+./servidor 5 10
+```
 
-***
+## Uso del Cliente
+```bash
+./cliente [IP_servidor] [Puerto]
+```
 
-#### **4. Plan de Entrega y Verificación **
+Ejemplo:
+```bash
+./cliente 127.0.0.1 8080
+```
 
-* **Código Fuente:** Se entregará el código C completo para `servidor` y `cliente`, junto con un **`Makefile`** actualizado que permita compilar ambos ejecutables.
-* **Validación de Parámetros:** Ambos programas mostrarán un mensaje de ayuda detallado si los argumentos de línea de comandos son incorrectos o no se proporcionan.
-* **Documentación de Monitoreo:** Se incluirá un informe con evidencia capturada mediante las herramientas `netstat`, `lsof`, `ps` y `htop`. Estas capturas demostrarán:
-    * La creación de sockets y el estado de las conexiones.
-    * La gestión de múltiples procesos/hilos para clientes concurrentes.
-    * El bloqueo efectivo de clientes durante una transacción activa.
-* **Empaquetado Final:** El proyecto se entregará en un único archivo comprimido **ZIP** que contendrá todo el material solicitado.
+## Comandos Disponibles
+
+### Transacciones
+- `BEGIN TRANSACTION` - Iniciar transacción
+- `COMMIT TRANSACTION` - Confirmar transacción
+
+### Consultas
+- `SELECT <ID>` - Consultar registro por ID
+
+### Modificaciones (requieren transacción activa)
+- `INSERT <ID_PROCESO> <TIMESTAMP> <DATO_ALEATORIO>` - Insertar nuevo registro
+- `UPDATE <ID> <ID_PROCESO> <TIMESTAMP> <DATO_ALEATORIO>` - Actualizar registro existente
+- `DELETE <ID>` - Eliminar registro
+
+### Control
+- `EXIT` - Salir del cliente
+
+## Ejemplo de Sesión
+```
+> BEGIN TRANSACTION
+Servidor: OK: Transaccion iniciada. Archivo bloqueado exclusivamente.
+
+> SELECT 0
+Servidor: RESULTADO:
+ID,ID_PROCESO,TIMESTAMP,DATO_ALEATORIO
+0,3646,1759609368,DATA_0_1759609368_MtkWdEiqieWk2VFz8wf8d1...
+
+> INSERT 1234 1759609999 DATA_TEST_123
+Servidor: OK: Registro insertado con ID 3648. Pendiente de COMMIT.
+
+> COMMIT TRANSACTION
+Servidor: OK: Transaccion confirmada y bloqueo liberado.
+
+> EXIT
+```
+
+## Tipos de Archivos
+
+### Archivos Fuente (permanentes)
+- `servidor.c`, `cliente.c` - Código fuente
+- `Makefile` - Configuración de compilación
+- `servidor.conf` - Configuración del servidor
+- `README.md` - Documentación
+
+### Archivos Generados (eliminables con make clean)
+- `servidor`, `cliente` - Ejecutables compilados
+- `server.log` - Log de ejecución
+- `temp.csv` - Archivos temporales de operaciones
+- `core.*` - Archivos de volcado (si hay crashes)
+
+## Características
+
+- **Control de concurrencia**: Máximo N clientes concurrentes
+- **Transacciones**: Bloqueo exclusivo del archivo durante transacciones
+- **Configuración flexible**: Archivo de configuración para host, puerto, archivos
+- **Logging**: Registro de actividades del servidor
+- **Manejo de errores**: Detección automática de límite de clientes alcanzado
+- **Limpieza automática**: Liberación completa de recursos al finalizar
