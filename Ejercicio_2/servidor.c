@@ -591,7 +591,7 @@ void manejar_cliente(int client_socket) {
     
     // Cierre y limpieza
     log_message("Cliente desconectado. Finalizando proceso hijo.");
-    printf("Cliente desconectado. Clientes activos restantes: %d\n", clientes_activos - 1);
+    printf("Cliente desconectado. Clientes activos restantes: %d\n", clientes_activos);
     
     // Liberar bloqueo si estaba activo
     if (transaccion_activa) {
