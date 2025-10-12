@@ -10,6 +10,7 @@
 #include <sys/file.h> // Para la función flock
 #include <fcntl.h>    // Para las banderas de flock
 #include <signal.h>    // Para manejo de señales
+#include <time.h>     // Para time_t
 
 #define DEFAULT_PORT 8080
 #define BUFFER_SIZE 1024
@@ -18,16 +19,37 @@
 #define CONFIG_FILE "servidor.conf"
 #define MAX_CONFIG_LINE 256
 
+// Estructura para manejar clientes en cola de espera
+typedef struct {
+    int socket;
+    int posicion;
+    time_t tiempo_ingreso;
+} cliente_en_espera_t;
+
 // Variables globales para ser accesibles en el handler
 int server_fd_global = -1; // Socket de escucha
 int clientes_activos = 0;
 int max_clientes_concurrentes = 0; // Se establece en main
+int max_clientes_espera = 0; // Se establece en main
+
+// Cola de espera
+cliente_en_espera_t cola_espera[100]; // Máximo 100 clientes en espera
+int clientes_en_cola = 0;
 
 // Variables de configuración
 char config_host[256] = "0.0.0.0";
 int config_port = DEFAULT_PORT;
 char config_csv_file[512] = DEFAULT_CSV_FILE;
 char config_log_file[256] = DEFAULT_LOG_FILE;
+
+// Declaraciones forward de funciones
+void leer_configuracion(void);
+void actualizar_posiciones_cola(void);
+void manejar_cliente(int client_socket);
+void cleanup_child_handler(int s);
+void limpiar_cola_espera(void);
+void limpiar_archivos_temporales(void);
+int obtener_siguiente_de_cola(void);
 
 // --- Funciones de Utilidad ---
 
@@ -40,7 +62,7 @@ void log_message(const char *message) {
 }
 
 // Función para limpiar todos los archivos temporales
-void limpiar_archivos_temporales() {
+void limpiar_archivos_temporales(void) {
     // Lista de archivos temporales que podrían quedar
     const char *temp_files[] = {
         "temp.csv",
@@ -60,8 +82,70 @@ void limpiar_archivos_temporales() {
     }
 }
 
+// Función para agregar cliente a la cola de espera
+int agregar_a_cola_espera(int client_socket) {
+    if (clientes_en_cola >= max_clientes_espera) {
+        return -1; // Cola llena
+    }
+    
+    cola_espera[clientes_en_cola].socket = client_socket;
+    cola_espera[clientes_en_cola].posicion = clientes_en_cola + 1;
+    cola_espera[clientes_en_cola].tiempo_ingreso = time(NULL);
+    clientes_en_cola++;
+    
+    char msg[256];
+    snprintf(msg, sizeof(msg), "Cliente agregado a cola de espera. Posicion: %d/%d", 
+             clientes_en_cola, max_clientes_espera);
+    log_message(msg);
+    
+    return clientes_en_cola; // Retorna la posición en la cola
+}
+
+// Función para obtener el siguiente cliente de la cola
+int obtener_siguiente_de_cola(void) {
+    if (clientes_en_cola == 0) {
+        return -1; // Cola vacía
+    }
+    
+    int client_socket = cola_espera[0].socket;
+    
+    // Mover todos los elementos hacia adelante
+    for (int i = 0; i < clientes_en_cola - 1; i++) {
+        cola_espera[i] = cola_espera[i + 1];
+        cola_espera[i].posicion = i + 1; // Actualizar posición
+    }
+    
+    clientes_en_cola--;
+    
+    // Notificar a los clientes restantes su nueva posición
+    actualizar_posiciones_cola();
+    
+    log_message("Cliente removido de cola de espera y promovido.");
+    return client_socket;
+}
+
+// Función para actualizar las posiciones en la cola
+void actualizar_posiciones_cola(void) {
+    for (int i = 0; i < clientes_en_cola; i++) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "POSICION_ACTUALIZADA: %d/%d\n", i + 1, max_clientes_espera);
+        send(cola_espera[i].socket, msg, strlen(msg), 0);
+    }
+}
+
+// Función para limpiar la cola de espera (cerrar sockets)
+void limpiar_cola_espera(void) {
+    for (int i = 0; i < clientes_en_cola; i++) {
+        const char *msg = "SERVIDOR_CERRANDO: El servidor se está cerrando.\n";
+        send(cola_espera[i].socket, msg, strlen(msg), 0);
+        close(cola_espera[i].socket);
+    }
+    clientes_en_cola = 0;
+    log_message("Cola de espera limpiada.");
+}
+
 // Función para leer el archivo de configuración
-void leer_configuracion() {
+void leer_configuracion(void) {
     FILE *config_fp = fopen(CONFIG_FILE, "r");
     if (!config_fp) {
         printf("Archivo de configuracion '%s' no encontrado. Usando valores por defecto.\n", CONFIG_FILE);
@@ -119,6 +203,34 @@ void sigchld_handler(int s) {
     // waitpid() para evitar zombies
     while (waitpid(-1, NULL, WNOHANG) > 0) {
         clientes_activos--;
+        
+        // Si hay clientes en cola de espera, promover uno
+        if (clientes_en_cola > 0 && clientes_activos < max_clientes_concurrentes) {
+            int client_socket = obtener_siguiente_de_cola();
+            if (client_socket != -1) {
+                // Notificar al cliente que puede proceder
+                const char *msg = "CONEXION_APROBADA: Puede proceder con sus comandos.\n";
+                send(client_socket, msg, strlen(msg), 0);
+                
+                // Crear proceso hijo para manejar este cliente
+                pid_t pid = fork();
+                if (pid == 0) {
+                    // Proceso Hijo
+                    close(server_fd_global);
+                    manejar_cliente(client_socket);
+                    exit(EXIT_SUCCESS);
+                } else if (pid > 0) {
+                    // Proceso Padre
+                    close(client_socket);
+                    clientes_activos++;
+                    printf("Cliente promovido de cola de espera (PID %d). Clientes activos: %d\n", 
+                           pid, clientes_activos);
+                } else {
+                    perror("fork failed para cliente en cola");
+                    close(client_socket);
+                }
+            }
+        }
     }
     (void)s; // Silenciar warning de parámetro no usado
 }
@@ -166,10 +278,13 @@ void cleanup_handler(int s) {
         log_message("Procesos hijos terminados.");
     }
     
-    // 3. Eliminar archivos temporales
+    // 3. Limpiar cola de espera
+    limpiar_cola_espera();
+    
+    // 4. Eliminar archivos temporales
     limpiar_archivos_temporales();
     
-    // 4. Cerrar y eliminar archivo de log (opcional, comentar si se quiere mantener)
+    // 5. Cerrar y eliminar archivo de log (opcional, comentar si se quiere mantener)
     if (access(config_log_file, F_OK) != -1) {
         log_message("Servidor finalizado correctamente.");
         // remove(config_log_file); // Comentado para mantener el log
@@ -184,6 +299,7 @@ void cleanup_handler(int s) {
 
 // Handler para limpieza en procesos hijo
 void cleanup_child_handler(int s) {
+    (void)s; // Silenciar warning de parámetro no usado
     log_message("Proceso hijo recibio señal de terminacion. Limpiando recursos.");
     limpiar_archivos_temporales();
     exit(EXIT_SUCCESS);
@@ -505,7 +621,6 @@ int main(int argc, char *argv[]) {
     struct sockaddr_in address;
     int addrlen = sizeof(address);
     struct sigaction sa_chld, sa_term;
-    int M_clientes_espera;
 
     if (argc != 3) {
         fprintf(stderr, "Uso: %s <clientes_concurrentes> <clientes_en_espera>\n", argv[0]);
@@ -518,11 +633,15 @@ int main(int argc, char *argv[]) {
     
     // Asignar N y M
     max_clientes_concurrentes = atoi(argv[1]);
-    M_clientes_espera = atoi(argv[2]);
-    if (max_clientes_concurrentes <= 0 || M_clientes_espera <= 0) {
+    max_clientes_espera = atoi(argv[2]);
+    if (max_clientes_concurrentes <= 0 || max_clientes_espera <= 0) {
         fprintf(stderr, "Error: los argumentos deben ser números enteros positivos.\n");
         return EXIT_FAILURE;
     }
+    
+    printf("Configuracion del servidor:\n");
+    printf("  Clientes concurrentes maximos: %d\n", max_clientes_concurrentes);
+    printf("  Clientes en cola de espera maximos: %d\n", max_clientes_espera);
 
     // 1. Manejo de señales para hijos (SIGCHLD)
     sa_chld.sa_handler = sigchld_handler; 
@@ -547,6 +666,9 @@ int main(int argc, char *argv[]) {
         perror("socket failed");
         exit(EXIT_FAILURE);
     }
+    
+    // Asignar a variable global para cleanup
+    server_fd_global = server_fd;
 
     // 3. Configuración del socket (reuso de dirección/puerto)
     int opt = 1;
@@ -578,8 +700,8 @@ int main(int argc, char *argv[]) {
     printf("Servidor iniciado. Escuchando en %s:%d...\n", config_host, config_port);
     log_message("Servidor iniciado.");
 
-    // 5. Escucha (Listen) - M clientes en espera
-    if (listen(server_fd, M_clientes_espera) < 0) {
+    // 5. Escucha (Listen) - Cola del sistema operativo (diferente a nuestra cola de aplicación)
+    if (listen(server_fd, max_clientes_espera + max_clientes_concurrentes) < 0) {
         perror("listen");
         exit(EXIT_FAILURE);
     }
@@ -595,14 +717,28 @@ int main(int argc, char *argv[]) {
 
         // Validación de N clientes concurrentes
         if (clientes_activos >= max_clientes_concurrentes) {
-            // Devolver un error al cliente y continuar (o cerrar socket)
-            const char *err_msg = "ERROR: Limite de clientes concurrentes alcanzado. Reintente luego.\n";
-            send(new_socket, err_msg, strlen(err_msg), 0);
-            close(new_socket);
-            log_message("Conexion rechazada: Limite de clientes alcanzado.");
+            // Intentar agregar a cola de espera
+            int posicion = agregar_a_cola_espera(new_socket);
+            if (posicion == -1) {
+                // Cola de espera llena
+                const char *err_msg = "ERROR: Limite de clientes concurrentes y cola.\n";
+                send(new_socket, err_msg, strlen(err_msg), 0);
+                close(new_socket);
+                log_message("Conexion rechazada: Limite de clientes y cola alcanzados.");
+            } else {
+                // Cliente agregado a cola de espera
+                char wait_msg[256];
+                snprintf(wait_msg, sizeof(wait_msg), 
+                        "EN_COLA_ESPERA: Posicion %d de %d. Esperando que se libere un slot...\n", 
+                        posicion, max_clientes_espera);
+                send(new_socket, wait_msg, strlen(wait_msg), 0);
+                printf("Cliente agregado a cola de espera. Posicion: %d/%d\n", posicion, max_clientes_espera);
+                // No cerrar el socket, se mantiene en la cola
+            }
             continue;
-        }else{
-            const char *accp_msg = "Conexión establecida! \n";
+        } else {
+            // Hay espacio disponible
+            const char *accp_msg = "CONEXION_ESTABLECIDA: Puede proceder con sus comandos.\n";
             send(new_socket, accp_msg, strlen(accp_msg), 0);
         }
 
