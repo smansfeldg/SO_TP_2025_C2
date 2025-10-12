@@ -70,36 +70,6 @@ test-full: all
 	@echo "Generando 1000 registros con 5 generadores..."
 	./$(COORDINADOR_BIN) 1000 5
 
-# Prueba de tolerancia a fallos
-test-fault-tolerance: all
-	@echo "=== Ejecutando pruebas de tolerancia a fallos ==="
-	@chmod +x test_fault_tolerance.sh
-	@./test_fault_tolerance.sh
-
-# Lotes de prueba progresivos
-test-batch: all
-	@echo "=== Ejecutando lotes de prueba progresivos ==="
-	@chmod +x test_batch_progressive.sh
-	@./test_batch_progressive.sh
-
-# Debug de comunicación
-debug-communication: all
-	@echo "=== Debug de comunicación coordinador-generador ==="
-	@chmod +x debug_communication.sh
-	@./debug_communication.sh
-
-# Diagnóstico de CSV vacío
-diagnose-empty: all
-	@echo "=== Diagnóstico de CSV vacío ==="
-	@chmod +x diagnose_empty_csv.sh
-	@./diagnose_empty_csv.sh
-
-# Generar datos sintéticos de referencia
-generate-synthetic:
-	@echo "=== Generando datos sintéticos de referencia ==="
-	@chmod +x generate_synthetic_data.sh
-	@./generate_synthetic_data.sh
-
 # Verificar archivo CSV (requiere awk)
 verify: $(CSV_FILE)
 	@echo "=== Verificando archivo CSV ==="
@@ -153,11 +123,6 @@ help:
 	@echo "  all          - Compilar coordinador y generador"
 	@echo "  test         - Ejecutar prueba básica (100 registros, 3 generadores)"
 	@echo "  test-full    - Ejecutar prueba completa (1000 registros, 5 generadores)"
-	@echo "  test-fault-tolerance - Probar tolerancia a fallos de generadores"
-	@echo "  test-batch   - Ejecutar lotes de prueba progresivos"
-	@echo "  debug-communication - Debug detallado de comunicación IPC"
-	@echo "  diagnose-empty - Diagnosticar por qué el CSV queda vacío"
-	@echo "  generate-synthetic - Generar datos sintéticos de referencia"
 	@echo "  verify       - Verificar integridad del archivo CSV generado"
 	@echo "  clean        - Eliminar archivos compilados"
 	@echo "  clean-all    - Eliminar archivos compilados y de salida"
@@ -175,7 +140,7 @@ help:
 	@echo "  ./coordinador <total_registros> <num_generadores>"
 
 # Configurar objetivos que no generan archivos
-.PHONY: all test test-full test-fault-tolerance test-batch debug-communication diagnose-empty generate-synthetic verify clean clean-all ipc-status ipc-clean process-clean help
+.PHONY: all test test-full verify clean clean-all ipc-status ipc-clean process-clean help
 
 # Configuraciones adicionales
 .DEFAULT_GOAL := all
