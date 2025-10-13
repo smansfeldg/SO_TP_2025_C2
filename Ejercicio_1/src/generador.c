@@ -9,6 +9,7 @@
  */
 
 #include "../include/shared.h"
+#include <stdlib.h>  /* Para malloc() y free() */
 
 /* Variables globales del generador */
 static int my_shm_id = -1;
@@ -33,8 +34,10 @@ void generator_signal_handler(int sig) {
  * @return: Número de IDs asignados, 0 si no hay más IDs
  */
 int request_id_block(shared_memory_t *shared_mem, int sem_id, int *start_id, int *end_id) {
-    /* Obtener acceso exclusivo a la memoria compartida */
+    /* Tomar el "turno" para solicitar IDs (evitar que múltiples generadores soliciten simultáneamente) */
     sem_wait(sem_id, SEM_GENERATOR);
+    
+    /* Solicitar acceso a memoria compartida para preparar solicitud */
     sem_wait(sem_id, SEM_MUTEX);
     
     /* Preparar solicitud */
@@ -48,11 +51,13 @@ int request_id_block(shared_memory_t *shared_mem, int sem_id, int *start_id, int
     
     /* Esperar respuesta del coordinador */
     sem_wait(sem_id, SEM_COORDINATOR);
+    
+    /* Tomar mutex para leer respuesta de forma segura */
     sem_wait(sem_id, SEM_MUTEX);
     
     if (shared_mem->data.request.action == NO_MORE_IDS) {
         sem_post(sem_id, SEM_MUTEX);
-        /* Liberar el token para el siguiente generador */
+        /* Liberar el turno para que otros generadores puedan intentar */
         sem_post(sem_id, SEM_GENERATOR);
         printf("Generador PID %d: No hay más IDs disponibles\n", my_pid);
         return 0;
@@ -63,7 +68,8 @@ int request_id_block(shared_memory_t *shared_mem, int sem_id, int *start_id, int
     *end_id = shared_mem->data.request.end_id;
     
     sem_post(sem_id, SEM_MUTEX);
-    /* NO liberar SEM_GENERATOR aquí - mantener acceso exclusivo durante envío de registros */
+    /* Liberar el turno inmediatamente - ya tenemos nuestros IDs */
+    sem_post(sem_id, SEM_GENERATOR);
     
     printf("Generador PID %d: Recibidos IDs %d-%d\n", my_pid, *start_id, *end_id);
     return (*end_id - *start_id + 1);
@@ -136,7 +142,7 @@ void generator_main_loop(shared_memory_t *shared_mem, int sem_id) {
     printf("Generador PID %d iniciando bucle principal...\n", my_pid);
     
     while (1) {
-        /* Solicitar bloque de IDs */
+        /* FASE 1: Solicitar bloque de IDs (PARALELO) */
         int ids_received = request_id_block(shared_mem, sem_id, &start_id, &end_id);
         
         if (ids_received == 0) {
@@ -144,34 +150,70 @@ void generator_main_loop(shared_memory_t *shared_mem, int sem_id) {
             break;
         }
         
-        /* Generar y enviar registros para cada ID */
-        printf("Generador PID %d: Procesando IDs %d-%d\n", my_pid, start_id, end_id);
-        for (int current_id = start_id; current_id <= end_id; current_id++) {
-            record_t record;
-            
-            /* Generar registro */
-            generate_record(&record, current_id);
-            
-            /* Enviar registro al coordinador */
-            printf("Generador PID %d: Enviando registro ID %d\n", my_pid, current_id);
-            if (send_record(shared_mem, sem_id, &record) == 0) {
-                records_sent++;
-                printf("Generador PID %d: Registro ID %d enviado exitosamente\n", my_pid, current_id);
-                
-                if (records_sent % 10 == 0) {
-                    printf("Generador PID %d: Enviados %d registros\n", my_pid, records_sent);
-                }
-            } else {
-                fprintf(stderr, "Generador PID %d: Error enviando registro ID %d\n", 
-                        my_pid, current_id);
-            }
-            
-            /* Pequeña pausa para simular trabajo */
-            usleep(10000); /* 10ms para simular trabajo realista */
+        /* FASE 2: Generar todos los registros en buffer local (PARALELO) */
+        printf("Generador PID %d: Generando datos para IDs %d-%d\n", my_pid, start_id, end_id);
+        record_t *records = malloc(ids_received * sizeof(record_t));
+        if (!records) {
+            fprintf(stderr, "Generador PID %d: Error asignando memoria para buffer\n", my_pid);
+            break;
         }
         
-        /* Liberar el token de acceso exclusivo después de procesar todos los IDs del bloque */
-        sem_post(sem_id, SEM_GENERATOR);
+        for (int i = 0; i < ids_received; i++) {
+            int current_id = start_id + i;
+            generate_record(&records[i], current_id);
+            /* Simular trabajo de generación de datos */
+            usleep(5000); /* 5ms por registro */
+        }
+        printf("Generador PID %d: Datos generados para IDs %d-%d\n", my_pid, start_id, end_id);
+        
+        /* FASE 3: Esperar turno para escritura ordenada (SINCRONIZACIÓN) */
+        printf("Generador PID %d: Esperando turno para escribir IDs %d-%d\n", my_pid, start_id, end_id);
+        while (1) {
+            sem_wait(sem_id, SEM_MUTEX);
+            int current_next = shared_mem->next_id_to_write;
+            sem_post(sem_id, SEM_MUTEX);
+            
+            if (current_next == start_id) {
+                /* Es nuestro turno */
+                break;
+            }
+            /* No es nuestro turno - esperar un poco y reintentar */
+            usleep(1000); /* 1ms de espera antes de reintentar */
+        }
+        
+        /* FASE 4: Escribir todos los registros en orden (UNO POR UNO) */
+        printf("Generador PID %d: Escribiendo IDs %d-%d\n", my_pid, start_id, end_id);
+        for (int i = 0; i < ids_received; i++) {
+            /* Tomar mutex para escritura */
+            sem_wait(sem_id, SEM_MUTEX);
+            
+            /* Copiar registro a memoria compartida */
+            shared_mem->status = SEND_RECORD;
+            memcpy(&shared_mem->data.record, &records[i], sizeof(record_t));
+            
+            /* Liberar mutex y notificar al coordinador */
+            sem_post(sem_id, SEM_MUTEX);
+            sem_post(sem_id, SEM_COORDINATOR);
+            
+            /* Esperar confirmación del coordinador */
+            sem_wait(sem_id, SEM_COORDINATOR);
+            
+            records_sent++;
+        }
+        
+        /* Actualizar next_id_to_write para el siguiente generador */
+        sem_wait(sem_id, SEM_MUTEX);
+        shared_mem->next_id_to_write = end_id + 1;
+        sem_post(sem_id, SEM_MUTEX);
+        
+        printf("Generador PID %d: IDs %d-%d escritos exitosamente\n", my_pid, start_id, end_id);
+        
+        /* Liberar buffer */
+        free(records);
+        
+        if (records_sent % 10 == 0) {
+            printf("Generador PID %d: Total enviados %d registros\n", my_pid, records_sent);
+        }
     }
     
     printf("Generador PID %d terminado. Total enviados: %d registros\n", 
