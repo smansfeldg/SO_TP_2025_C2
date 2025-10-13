@@ -59,6 +59,29 @@ Ejemplo:
 ./cliente 127.0.0.1 8080
 ```
 
+## Sistema de Transacciones
+
+El servidor implementa transacciones ACID con rollback automático:
+
+### Comandos de Transacción
+
+- `BEGIN TRANSACTION` - Iniciar transacción (bloquea archivo exclusivamente)
+- `COMMIT TRANSACTION` - Confirmar transacción (aplicar todos los cambios al archivo)
+
+### Comandos de Datos
+
+- `SELECT <ID>` - Consultar registro por ID (no requiere transacción)
+- `INSERT <ID_PROCESO> <TIMESTAMP> <DATO_ALEATORIO>` - Preparar inserción
+- `UPDATE <ID> <ID_PROCESO> <TIMESTAMP> <DATO_ALEATORIO>` - Preparar actualización
+- `DELETE <ID>` - Preparar eliminación
+
+### Comportamiento de Transacciones
+
+1. **Operaciones Pendientes**: Los cambios se almacenan en memoria hasta el COMMIT
+2. **Rollback Automático**: Si el cliente se desconecta, los cambios se descartan
+3. **Bloqueo Exclusivo**: Solo un cliente puede tener transacción activa
+4. **Atomicidad**: Todos los cambios se aplican juntos o ninguno se aplica
+
 ## Comandos Disponibles
 
 ### Transacciones

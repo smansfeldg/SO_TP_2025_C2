@@ -20,13 +20,14 @@ void error(const char *msg) {
 void mostrar_ayuda() {
     fprintf(stderr, "\nComandos disponibles:\n");
     fprintf(stderr, "  BEGIN TRANSACTION          - Iniciar transaccion\n");
-    fprintf(stderr, "  COMMIT TRANSACTION         - Confirmar transaccion\n");
+    fprintf(stderr, "  COMMIT TRANSACTION         - Confirmar transaccion (aplicar cambios)\n");
     fprintf(stderr, "  SELECT <ID>                - Consultar registro por ID\n");
-    fprintf(stderr, "  INSERT <ID_PROC> <TIME> <DATO> - Insertar nuevo registro\n");
-    fprintf(stderr, "  UPDATE <ID> <ID_PROC> <TIME> <DATO> - Actualizar registro\n");
-    fprintf(stderr, "  DELETE <ID>                - Eliminar registro\n");
+    fprintf(stderr, "  INSERT <ID_PROC> <TIME> <DATO> - Preparar insercion\n");
+    fprintf(stderr, "  UPDATE <ID> <ID_PROC> <TIME> <DATO> - Preparar actualizacion\n");
+    fprintf(stderr, "  DELETE <ID>                - Preparar eliminacion\n");
     fprintf(stderr, "  EXIT                       - Salir del cliente\n");
     fprintf(stderr, "\nNota: INSERT, UPDATE y DELETE requieren transaccion activa.\n");
+    fprintf(stderr, "Los cambios NO se aplican hasta hacer COMMIT TRANSACTION.\n");
 }
 
 int main(int argc, char *argv[]) {

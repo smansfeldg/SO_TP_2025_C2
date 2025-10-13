@@ -26,6 +26,23 @@ typedef struct {
     time_t tiempo_ingreso;
 } cliente_en_espera_t;
 
+// Estructura para operaciones pendientes en transacciones
+typedef enum {
+    OP_INSERT,
+    OP_UPDATE,
+    OP_DELETE
+} tipo_operacion_t;
+
+typedef struct {
+    tipo_operacion_t tipo;
+    int id;
+    char id_proceso[64];
+    char timestamp[64];
+    char dato_aleatorio[512];
+} operacion_pendiente_t;
+
+#define MAX_OPERACIONES_PENDIENTES 100
+
 // Variables globales para ser accesibles en el handler
 int server_fd_global = -1; // Socket de escucha
 int clientes_activos = 0;
@@ -50,6 +67,9 @@ void cleanup_child_handler(int s);
 void limpiar_cola_espera(void);
 void limpiar_archivos_temporales(void);
 int obtener_siguiente_de_cola(void);
+int aplicar_operaciones_pendientes(operacion_pendiente_t *operaciones, int num_operaciones);
+void limpiar_operaciones_pendientes(operacion_pendiente_t *operaciones, int *num_operaciones);
+int obtener_proximo_id(void);
 
 // --- Funciones de Utilidad ---
 
@@ -142,6 +162,112 @@ void limpiar_cola_espera(void) {
     }
     clientes_en_cola = 0;
     log_message("Cola de espera limpiada.");
+}
+
+// Función para obtener el próximo ID disponible
+int obtener_proximo_id(void) {
+    FILE *csv_file = fopen(config_csv_file, "r");
+    int max_id = -1;
+    char line[BUFFER_SIZE];
+    
+    if (csv_file) {
+        fgets(line, sizeof(line), csv_file); // Skip header
+        while (fgets(line, sizeof(line), csv_file)) {
+            int current_id;
+            if (sscanf(line, "%d,", &current_id) == 1 && current_id > max_id) {
+                max_id = current_id;
+            }
+        }
+        fclose(csv_file);
+    }
+    
+    return max_id + 1;
+}
+
+// Función para limpiar operaciones pendientes
+void limpiar_operaciones_pendientes(operacion_pendiente_t *operaciones, int *num_operaciones) {
+    (void)operaciones; // Silenciar warning de parámetro no usado
+    *num_operaciones = 0;
+    log_message("Operaciones pendientes limpiadas (ROLLBACK).");
+}
+
+// Función para aplicar todas las operaciones pendientes al archivo
+int aplicar_operaciones_pendientes(operacion_pendiente_t *operaciones, int num_operaciones) {
+    if (num_operaciones == 0) {
+        return 1; // Nada que hacer
+    }
+    
+    // Crear archivo temporal para las modificaciones
+    FILE *csv_file = fopen(config_csv_file, "r");
+    FILE *temp_file = fopen("temp_commit.csv", "w");
+    
+    if (!csv_file || !temp_file) {
+        if (csv_file) fclose(csv_file);
+        if (temp_file) fclose(temp_file);
+        return 0; // Error
+    }
+    
+    char line[BUFFER_SIZE];
+    
+    // Copiar encabezado
+    if (fgets(line, sizeof(line), csv_file)) {
+        fputs(line, temp_file);
+    }
+    
+    // Procesar cada línea del archivo original
+    while (fgets(line, sizeof(line), csv_file)) {
+        int current_id;
+        int linea_procesada = 0;
+        
+        if (sscanf(line, "%d,", &current_id) == 1) {
+            // Verificar si esta línea debe ser modificada o eliminada
+            for (int i = 0; i < num_operaciones; i++) {
+                if (operaciones[i].tipo == OP_DELETE && operaciones[i].id == current_id) {
+                    // No copiar esta línea (eliminar)
+                    linea_procesada = 1;
+                    break;
+                } else if (operaciones[i].tipo == OP_UPDATE && operaciones[i].id == current_id) {
+                    // Reemplazar con datos actualizados
+                    fprintf(temp_file, "%d,%s,%s,%s\n", 
+                           operaciones[i].id,
+                           operaciones[i].id_proceso,
+                           operaciones[i].timestamp,
+                           operaciones[i].dato_aleatorio);
+                    linea_procesada = 1;
+                    break;
+                }
+            }
+        }
+        
+        // Si no fue procesada, copiar la línea original
+        if (!linea_procesada) {
+            fputs(line, temp_file);
+        }
+    }
+    
+    // Agregar nuevos registros (INSERT)
+    for (int i = 0; i < num_operaciones; i++) {
+        if (operaciones[i].tipo == OP_INSERT) {
+            fprintf(temp_file, "%d,%s,%s,%s\n",
+                   operaciones[i].id,
+                   operaciones[i].id_proceso,
+                   operaciones[i].timestamp,
+                   operaciones[i].dato_aleatorio);
+        }
+    }
+    
+    fclose(csv_file);
+    fclose(temp_file);
+    
+    // Reemplazar archivo original con el temporal
+    if (rename("temp_commit.csv", config_csv_file) == 0) {
+        log_message("Operaciones pendientes aplicadas al archivo (COMMIT).");
+        return 1;
+    } else {
+        remove("temp_commit.csv");
+        log_message("Error al aplicar operaciones pendientes.");
+        return 0;
+    }
 }
 
 // Función para leer el archivo de configuración
@@ -329,6 +455,10 @@ void manejar_cliente(int client_socket) {
     }
 
     int transaccion_activa = 0; // Estado de la transacción para ESTE cliente
+    
+    // Array para operaciones pendientes de este cliente
+    operacion_pendiente_t operaciones_pendientes[MAX_OPERACIONES_PENDIENTES];
+    int num_operaciones_pendientes = 0;
 
     log_message("Cliente conectado. Iniciando manejo.");
 
@@ -348,11 +478,35 @@ void manejar_cliente(int client_socket) {
         // 2. COMMIT TRANSACTION
         else if (strncmp(buffer, "COMMIT TRANSACTION", 18) == 0) {
             if (transaccion_activa) {
-                liberar_bloqueo(csv_fd);
-                transaccion_activa = 0;
-                strcpy(response, "OK: Transaccion confirmada y bloqueo liberado.\n");
+                // Aplicar todas las operaciones pendientes al archivo
+                int ops_aplicadas = num_operaciones_pendientes;
+                if (aplicar_operaciones_pendientes(operaciones_pendientes, num_operaciones_pendientes)) {
+                    liberar_bloqueo(csv_fd);
+                    transaccion_activa = 0;
+                    limpiar_operaciones_pendientes(operaciones_pendientes, &num_operaciones_pendientes);
+                    snprintf(response, BUFFER_SIZE - 1, "OK: Transaccion confirmada. %d operaciones aplicadas al archivo.\n", 
+                            ops_aplicadas);
+                    response[BUFFER_SIZE - 1] = '\0';
+                } else {
+                    strcpy(response, "ERROR: No se pudieron aplicar las operaciones. Transaccion abortada.\n");
+                    limpiar_operaciones_pendientes(operaciones_pendientes, &num_operaciones_pendientes);
+                }
             } else {
                 strcpy(response, "ERROR: No hay transaccion activa para hacer COMMIT.\n");
+            }
+        }
+        // 2.1. ROLLBACK TRANSACTION
+        else if (strncmp(buffer, "ROLLBACK TRANSACTION", 20) == 0) {
+            if (transaccion_activa) {
+                liberar_bloqueo(csv_fd);
+                transaccion_activa = 0;
+                int ops_canceladas = num_operaciones_pendientes;
+                limpiar_operaciones_pendientes(operaciones_pendientes, &num_operaciones_pendientes);
+                snprintf(response, BUFFER_SIZE - 1, "OK: Transaccion cancelada. %d operaciones descartadas.\n", 
+                        ops_canceladas);
+                response[BUFFER_SIZE - 1] = '\0';
+            } else {
+                strcpy(response, "ERROR: No hay transaccion activa para hacer ROLLBACK.\n");
             }
         }
         // 3. CONSULTA (SELECT)
@@ -428,33 +582,33 @@ void manejar_cliente(int client_socket) {
                     
                     if (i < 4) {
                         strcpy(response, "ERROR: Formato incorrecto. Use: INSERT <ID_PROCESO> <TIMESTAMP> <DATO_ALEATORIO>\n");
+                    } else if (num_operaciones_pendientes >= MAX_OPERACIONES_PENDIENTES) {
+                        strcpy(response, "ERROR: Demasiadas operaciones pendientes. Haga COMMIT primero.\n");
                     } else {
-                        // Encontrar el próximo ID disponible
-                        FILE *csv_file = fopen(config_csv_file, "r");
-                        int max_id = -1;
-                        char line[BUFFER_SIZE];
+                        // Agregar operación a la lista de pendientes
+                        int nuevo_id = obtener_proximo_id();
                         
-                        if (csv_file) {
-                            fgets(line, sizeof(line), csv_file); // Skip header
-                            while (fgets(line, sizeof(line), csv_file)) {
-                                int current_id;
-                                if (sscanf(line, "%d,", &current_id) == 1 && current_id > max_id) {
-                                    max_id = current_id;
-                                }
+                        // Verificar si ya hay INSERTs pendientes para ajustar el ID
+                        for (int j = 0; j < num_operaciones_pendientes; j++) {
+                            if (operaciones_pendientes[j].tipo == OP_INSERT && operaciones_pendientes[j].id >= nuevo_id) {
+                                nuevo_id = operaciones_pendientes[j].id + 1;
                             }
-                            fclose(csv_file);
                         }
                         
-                        // Añadir nuevo registro
-                        csv_file = fopen(config_csv_file, "a");
-                        if (csv_file) {
-                            fprintf(csv_file, "%d,%s,%s,%s\n", max_id + 1, tokens[1], tokens[2], tokens[3]);
-                            fclose(csv_file);
-                            snprintf(response, BUFFER_SIZE - 1, "OK: Registro insertado con ID %d. Pendiente de COMMIT.\n", max_id + 1);
-                            response[BUFFER_SIZE - 1] = '\0';
-                        } else {
-                            strcpy(response, "ERROR: No se pudo escribir en el archivo CSV.\n");
-                        }
+                        operaciones_pendientes[num_operaciones_pendientes].tipo = OP_INSERT;
+                        operaciones_pendientes[num_operaciones_pendientes].id = nuevo_id;
+                        strncpy(operaciones_pendientes[num_operaciones_pendientes].id_proceso, tokens[1], 63);
+                        operaciones_pendientes[num_operaciones_pendientes].id_proceso[63] = '\0';
+                        strncpy(operaciones_pendientes[num_operaciones_pendientes].timestamp, tokens[2], 63);
+                        operaciones_pendientes[num_operaciones_pendientes].timestamp[63] = '\0';
+                        strncpy(operaciones_pendientes[num_operaciones_pendientes].dato_aleatorio, tokens[3], 511);
+                        operaciones_pendientes[num_operaciones_pendientes].dato_aleatorio[511] = '\0';
+                        
+                        num_operaciones_pendientes++;
+                        
+                        snprintf(response, BUFFER_SIZE - 1, "OK: INSERT preparado con ID %d. Pendiente de COMMIT (%d operaciones).\n", 
+                                nuevo_id, num_operaciones_pendientes);
+                        response[BUFFER_SIZE - 1] = '\0';
                     }
                 }
                 else if (strncmp(buffer, "DELETE", 6) == 0) {
@@ -464,48 +618,40 @@ void manejar_cliente(int client_socket) {
                     
                     if (token == NULL) {
                         strcpy(response, "ERROR: Formato incorrecto. Use: DELETE <ID>\n");
+                    } else if (num_operaciones_pendientes >= MAX_OPERACIONES_PENDIENTES) {
+                        strcpy(response, "ERROR: Demasiadas operaciones pendientes. Haga COMMIT primero.\n");
                     } else {
                         int id_eliminar = atoi(token);
                         
-                        // Crear archivo temporal
+                        // Verificar que el registro existe en el archivo actual
                         FILE *csv_file = fopen(config_csv_file, "r");
-                        FILE *temp_file = fopen("temp.csv", "w");
+                        int found = 0;
+                        char line[BUFFER_SIZE];
                         
-                        if (csv_file && temp_file) {
-                            char line[BUFFER_SIZE];
-                            int found = 0;
-                            
-                            // Copiar encabezado
-                            if (fgets(line, sizeof(line), csv_file)) {
-                                fputs(line, temp_file);
-                            }
-                            
-                            // Copiar todas las líneas excepto la que tiene el ID a eliminar
+                        if (csv_file) {
+                            fgets(line, sizeof(line), csv_file); // Skip header
                             while (fgets(line, sizeof(line), csv_file)) {
                                 int current_id;
                                 if (sscanf(line, "%d,", &current_id) == 1 && current_id == id_eliminar) {
                                     found = 1;
-                                    continue; // No copiar esta línea
+                                    break;
                                 }
-                                fputs(line, temp_file);
                             }
-                            
                             fclose(csv_file);
-                            fclose(temp_file);
+                        }
+                        
+                        if (found) {
+                            // Agregar operación DELETE a la lista de pendientes
+                            operaciones_pendientes[num_operaciones_pendientes].tipo = OP_DELETE;
+                            operaciones_pendientes[num_operaciones_pendientes].id = id_eliminar;
+                            num_operaciones_pendientes++;
                             
-                            if (found) {
-                                rename("temp.csv", config_csv_file);
-                                snprintf(response, BUFFER_SIZE - 1, "OK: Registro con ID %d eliminado. Pendiente de COMMIT.\n", id_eliminar);
-                                response[BUFFER_SIZE - 1] = '\0';
-                            } else {
-                                remove("temp.csv");
-                                snprintf(response, BUFFER_SIZE - 1, "ERROR: No se encontro registro con ID %d.\n", id_eliminar);
-                                response[BUFFER_SIZE - 1] = '\0';
-                            }
+                            snprintf(response, BUFFER_SIZE - 1, "OK: DELETE preparado para ID %d. Pendiente de COMMIT (%d operaciones).\n", 
+                                    id_eliminar, num_operaciones_pendientes);
+                            response[BUFFER_SIZE - 1] = '\0';
                         } else {
-                            strcpy(response, "ERROR: No se pudo acceder al archivo CSV.\n");
-                            if (csv_file) fclose(csv_file);
-                            if (temp_file) fclose(temp_file);
+                            snprintf(response, BUFFER_SIZE - 1, "ERROR: No se encontro registro con ID %d.\n", id_eliminar);
+                            response[BUFFER_SIZE - 1] = '\0';
                         }
                     }
                 }
@@ -521,50 +667,47 @@ void manejar_cliente(int client_socket) {
                     
                     if (i < 5) {
                         strcpy(response, "ERROR: Formato incorrecto. Use: UPDATE <ID> <ID_PROCESO> <TIMESTAMP> <DATO_ALEATORIO>\n");
+                    } else if (num_operaciones_pendientes >= MAX_OPERACIONES_PENDIENTES) {
+                        strcpy(response, "ERROR: Demasiadas operaciones pendientes. Haga COMMIT primero.\n");
                     } else {
                         int id_actualizar = atoi(tokens[1]);
                         
-                        // Crear archivo temporal
+                        // Verificar que el registro existe en el archivo actual
                         FILE *csv_file = fopen(config_csv_file, "r");
-                        FILE *temp_file = fopen("temp.csv", "w");
+                        int found = 0;
+                        char line[BUFFER_SIZE];
                         
-                        if (csv_file && temp_file) {
-                            char line[BUFFER_SIZE];
-                            int found = 0;
-                            
-                            // Copiar encabezado
-                            if (fgets(line, sizeof(line), csv_file)) {
-                                fputs(line, temp_file);
-                            }
-                            
-                            // Procesar cada línea
+                        if (csv_file) {
+                            fgets(line, sizeof(line), csv_file); // Skip header
                             while (fgets(line, sizeof(line), csv_file)) {
                                 int current_id;
                                 if (sscanf(line, "%d,", &current_id) == 1 && current_id == id_actualizar) {
-                                    // Reemplazar con los nuevos datos
-                                    fprintf(temp_file, "%d,%s,%s,%s\n", id_actualizar, tokens[2], tokens[3], tokens[4]);
                                     found = 1;
-                                } else {
-                                    fputs(line, temp_file);
+                                    break;
                                 }
                             }
-                            
                             fclose(csv_file);
-                            fclose(temp_file);
+                        }
+                        
+                        if (found) {
+                            // Agregar operación UPDATE a la lista de pendientes
+                            operaciones_pendientes[num_operaciones_pendientes].tipo = OP_UPDATE;
+                            operaciones_pendientes[num_operaciones_pendientes].id = id_actualizar;
+                            strncpy(operaciones_pendientes[num_operaciones_pendientes].id_proceso, tokens[2], 63);
+                            operaciones_pendientes[num_operaciones_pendientes].id_proceso[63] = '\0';
+                            strncpy(operaciones_pendientes[num_operaciones_pendientes].timestamp, tokens[3], 63);
+                            operaciones_pendientes[num_operaciones_pendientes].timestamp[63] = '\0';
+                            strncpy(operaciones_pendientes[num_operaciones_pendientes].dato_aleatorio, tokens[4], 511);
+                            operaciones_pendientes[num_operaciones_pendientes].dato_aleatorio[511] = '\0';
                             
-                            if (found) {
-                                rename("temp.csv", config_csv_file);
-                                snprintf(response, BUFFER_SIZE - 1, "OK: Registro con ID %d actualizado. Pendiente de COMMIT.\n", id_actualizar);
-                                response[BUFFER_SIZE - 1] = '\0';
-                            } else {
-                                remove("temp.csv");
-                                snprintf(response, BUFFER_SIZE - 1, "ERROR: No se encontro registro con ID %d.\n", id_actualizar);
-                                response[BUFFER_SIZE - 1] = '\0';
-                            }
+                            num_operaciones_pendientes++;
+                            
+                            snprintf(response, BUFFER_SIZE - 1, "OK: UPDATE preparado para ID %d. Pendiente de COMMIT (%d operaciones).\n", 
+                                    id_actualizar, num_operaciones_pendientes);
+                            response[BUFFER_SIZE - 1] = '\0';
                         } else {
-                            strcpy(response, "ERROR: No se pudo acceder al archivo CSV.\n");
-                            if (csv_file) fclose(csv_file);
-                            if (temp_file) fclose(temp_file);
+                            snprintf(response, BUFFER_SIZE - 1, "ERROR: No se encontro registro con ID %d.\n", id_actualizar);
+                            response[BUFFER_SIZE - 1] = '\0';
                         }
                     }
                 }
@@ -576,7 +719,10 @@ void manejar_cliente(int client_socket) {
         else if (strncmp(buffer, "EXIT", 4) == 0) {
             if (transaccion_activa) {
                 liberar_bloqueo(csv_fd); // Liberar antes de salir
+                limpiar_operaciones_pendientes(operaciones_pendientes, &num_operaciones_pendientes);
                 log_message("Cliente salio con transaccion activa. ROLLBACK implicito.");
+                strcpy(response, "OK: Saliendo. Transaccion cancelada (ROLLBACK).\n");
+                send(client_socket, response, strlen(response), 0);
             }
             break; // Salir del bucle while
         }
@@ -593,10 +739,11 @@ void manejar_cliente(int client_socket) {
     log_message("Cliente desconectado. Finalizando proceso hijo.");
     printf("Cliente desconectado. Clientes activos restantes: %d\n", clientes_activos);
     
-    // Liberar bloqueo si estaba activo
+    // Liberar bloqueo si estaba activo y hacer rollback
     if (transaccion_activa) {
         liberar_bloqueo(csv_fd);
-        log_message("Bloqueo liberado por desconexion de cliente.");
+        limpiar_operaciones_pendientes(operaciones_pendientes, &num_operaciones_pendientes);
+        log_message("Bloqueo liberado y ROLLBACK por desconexion de cliente.");
     }
     
     // Cerrar descriptores de archivo
