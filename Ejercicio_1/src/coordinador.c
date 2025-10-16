@@ -507,7 +507,6 @@ int main(int argc, char *argv[]) {
     
     /* Inicializar memoria compartida */
     memset(shared_mem, 0, sizeof(shared_memory_t));
-    shared_mem->next_id_to_write = 1;  /* Primer ID esperado para escritura ordenada */
     
     /* Crear semáforos */
     sem_id = create_semaphore(SEM_KEY, SEM_COUNT);

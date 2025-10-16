@@ -54,7 +54,6 @@ typedef struct {
 /* Estructura de la memoria compartida */
 typedef struct {
     int status;              /* Estado actual de la memoria compartida */
-    int next_id_to_write;    /* Próximo ID que debe escribirse (para orden correlativo) */
     union {
         id_request_t request; /* Para solicitudes de ID */
         record_t record;      /* Para envío de registros */
