@@ -1,6 +1,6 @@
 /*
- * shared.h - Definiciones compartidas entre coordinador y generador
- * 
+ * shared.h - Definiciones compartidas entre coordinador y generadores
+ *
  * Sistema Generador de Datos Concurrente con Memoria Compartida
  * Ejercicio 1 - Sistemas Operativos
  */
@@ -8,64 +8,78 @@
 #ifndef SHARED_H
 #define SHARED_H
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <time.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <sys/shm.h>
-#include <sys/sem.h>
-#include <sys/ipc.h>
 #include <errno.h>
 #include <signal.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#include <sys/shm.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
 
 /* Constantes del sistema */
 #define MAX_DATA_SIZE 256
-#define ID_BLOCK_SIZE 10      /* Bloque de IDs que asigna el coordinador */
-#define SHM_KEY 0x1234        /* Clave para memoria compartida */
-#define SEM_KEY 0x5678        /* Clave para semáforos */
+#define ID_BLOCK_SIZE 10
+#define RECORD_BUFFER_SIZE 32
+#define SHM_KEY 0x1234
+#define SEM_KEY 0x5678
 #define CSV_FILENAME "datos_generados.csv"
 
 /* Estados de comunicación */
-#define REQUEST_IDS 1         /* Generador solicita IDs */
-#define SEND_RECORD 2         /* Generador envía registro */
-#define NO_MORE_IDS 3         /* Coordinador indica fin de IDs */
-#define SHUTDOWN 4            /* Señal de cierre */
+#define REQUEST_IDS 1
+#define SEND_RECORD 2
+#define NO_MORE_IDS 3
+#define SHUTDOWN 4
+#define ASSIGN_IDS 5
 
-/* Estructura para solicitud de IDs */
+/* Solicitud y asignación de IDs */
 typedef struct {
-    int action;               /* Tipo de acción (REQUEST_IDS, SEND_RECORD, etc.) */
-    pid_t process_id;         /* ID del proceso generador */
-    int start_id;            /* ID inicial del bloque asignado */
-    int end_id;              /* ID final del bloque asignado */
+    int action;
+    pid_t process_id;
+    int start_id;
+    int end_id;
 } id_request_t;
 
-/* Estructura de un registro de datos */
+/* Registro generado por un proceso */
 typedef struct {
-    int action;               /* SEND_RECORD */
-    int id;                  /* ID único del registro */
-    pid_t process_id;        /* ID del proceso que generó el registro */
-    time_t timestamp;        /* Timestamp de generación */
-    char random_data[MAX_DATA_SIZE]; /* Dato aleatorio */
+    int action;
+    int id;
+    pid_t process_id;
+    time_t timestamp;
+    char random_data[MAX_DATA_SIZE];
 } record_t;
 
-/* Estructura de la memoria compartida */
 typedef struct {
-    int status;              /* Estado actual de la memoria compartida */
-    union {
-        id_request_t request; /* Para solicitudes de ID */
-        record_t record;      /* Para envío de registros */
-    } data;
+    id_request_t request;
+} request_shared_t;
+
+typedef struct {
+    record_t records[RECORD_BUFFER_SIZE];
+    int read_index;
+    int write_index;
+    int count;
+} record_ring_t;
+
+typedef struct {
+    request_shared_t request_slot;
+    record_ring_t record_ring;
 } shared_memory_t;
 
 /* Índices de semáforos */
 enum {
-    SEM_MUTEX = 0,           /* Exclusión mutua para acceso a memoria compartida */
-    SEM_COORDINATOR,         /* Señal para el coordinador */
-    SEM_GENERATOR,           /* Señal para generadores */
-    SEM_COUNT                /* Total de semáforos */
+    SEM_REQUEST_TURN = 0,
+    SEM_REQUEST_MUTEX,
+    SEM_REQUEST_AVAILABLE,
+    SEM_REQUEST_DONE,
+    SEM_RECORD_MUTEX,
+    SEM_RECORD_AVAILABLE,
+    SEM_RECORD_EMPTY,
+    SEM_COUNT
 };
 
 /* Declaraciones de funciones compartidas */
@@ -75,9 +89,10 @@ int create_semaphore(key_t key, int num_sems);
 int get_semaphore(key_t key);
 void sem_wait(int sem_id, int sem_num);
 void sem_post(int sem_id, int sem_num);
+int sem_trywait(int sem_id, int sem_num);
+int sem_wait_timed(int sem_id, int sem_num, const struct timespec *timeout);
 void generate_random_data(char *buffer, size_t size);
 
-/* Variables globales para cleanup */
 extern int g_shm_id;
 extern int g_sem_id;
 
