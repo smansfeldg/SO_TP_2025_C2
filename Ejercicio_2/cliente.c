@@ -17,17 +17,20 @@ void error(const char *msg) {
     exit(EXIT_FAILURE);
 }
 
+#define MSG_SERVIDOR_CERRANDO "SERVIDOR_CERRANDO:"
+
 void mostrar_ayuda() {
     fprintf(stderr, "\nComandos disponibles:\n");
     fprintf(stderr, "  BEGIN TRANSACTION          - Iniciar transaccion\n");
     fprintf(stderr, "  COMMIT TRANSACTION         - Confirmar transaccion (aplicar cambios)\n");
+    fprintf(stderr, "  ROLLBACK TRANSACTION       - Cancelar transaccion (no aplicar cambios)\n");
     fprintf(stderr, "  SELECT <ID>                - Consultar registro por ID\n");
     fprintf(stderr, "  INSERT <ID_PROC> <TIME> <DATO> - Preparar insercion\n");
     fprintf(stderr, "  UPDATE <ID> <ID_PROC> <TIME> <DATO> - Preparar actualizacion\n");
     fprintf(stderr, "  DELETE <ID>                - Preparar eliminacion\n");
     fprintf(stderr, "  EXIT                       - Salir del cliente\n");
     fprintf(stderr, "\nNota: INSERT, UPDATE y DELETE requieren transaccion activa.\n");
-    fprintf(stderr, "Los cambios NO se aplican hasta hacer COMMIT TRANSACTION.\n");
+    fprintf(stderr, "ROLLBACK cancela la transaccion sin guardar. COMMIT aplica los cambios.\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -79,7 +82,8 @@ int main(int argc, char *argv[]) {
     // Recibir y mostrar respuesta
     int bytes_read = recv(sock, buffer, BUFFER_SIZE - 1, 0);
     if (bytes_read <= 0) {
-        printf("Error o desconexion del servidor.\n");
+        printf("\n*** La conexion con el servidor ha finalizado repentinamente. ***\n");
+        close(sock);
         return EXIT_FAILURE;
     }
     buffer[bytes_read] = '\0';
@@ -114,7 +118,7 @@ int main(int argc, char *argv[]) {
             // Solo recibir mensajes del servidor, no pedir input del usuario
             int bytes_read = recv(sock, buffer, BUFFER_SIZE - 1, 0);
             if (bytes_read <= 0) {
-                printf("Error o desconexion del servidor.\n");
+                printf("\n*** La conexion con el servidor ha finalizado repentinamente. ***\n");
                 break;
             }
             buffer[bytes_read] = '\0';
@@ -126,10 +130,11 @@ int main(int argc, char *argv[]) {
             } else if (strncmp(buffer, "CONEXION_APROBADA:", 18) == 0) {
                 printf("Servidor: %s", buffer);
                 printf("¡Conexion aprobada! Ya puede enviar comandos normalmente.\n");
+                mostrar_ayuda();
                 en_cola_espera = 0; // Salir del modo de espera
                 continue;
-            } else if (strncmp(buffer, "SERVIDOR_CERRANDO:", 18) == 0) {
-                printf("Servidor: %s", buffer);
+            } else if (strstr(buffer, MSG_SERVIDOR_CERRANDO) != NULL) {
+                printf("\n*** La conexion con el servidor ha finalizado repentinamente. ***\n");
                 break;
             } else {
                 printf("Servidor: %s", buffer);
@@ -159,11 +164,16 @@ int main(int argc, char *argv[]) {
         // 7. Recibir y mostrar respuesta
         int bytes_read = recv(sock, buffer, BUFFER_SIZE - 1, 0);
         if (bytes_read <= 0) {
-            printf("Error o desconexion del servidor.\n");
+            printf("\n*** La conexion con el servidor ha finalizado repentinamente. ***\n");
             break;
         }
         buffer[bytes_read] = '\0';
         
+        // Verificar si el servidor se cerró
+        if (strstr(buffer, MSG_SERVIDOR_CERRANDO) != NULL) {
+            printf("\n*** La conexion con el servidor ha finalizado repentinamente. ***\n");
+            break;
+        }
         // Verificar si el servidor nos puso en cola de espera
         if (strncmp(buffer, "EN_COLA_ESPERA:", 15) == 0) {
             printf("Servidor: %s", buffer);

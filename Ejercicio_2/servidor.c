@@ -53,6 +53,9 @@ int max_clientes_espera = 0; // Se establece en main
 cliente_en_espera_t cola_espera[100]; // Máximo 100 clientes en espera
 int clientes_en_cola = 0;
 
+/* Socket del cliente en proceso hijo (para enviar aviso al cerrar) */
+static int g_client_socket_hijo = -1;
+
 // Variables de configuración
 char config_host[256] = "0.0.0.0";
 int config_port = DEFAULT_PORT;
@@ -115,7 +118,7 @@ int agregar_a_cola_espera(int client_socket) {
     
     char msg[256];
     snprintf(msg, sizeof(msg), "Cliente agregado a cola de espera. Posicion: %d/%d", 
-             clientes_en_cola, max_clientes_espera);
+            clientes_en_cola, max_clientes_espera);
     log_message(msg);
     
     return clientes_en_cola; // Retorna la posición en la cola
@@ -349,8 +352,7 @@ void sigchld_handler(int s) {
                     // Proceso Padre
                     close(client_socket);
                     clientes_activos++;
-                    printf("Cliente promovido de cola de espera (PID %d). Clientes activos: %d\n", 
-                           pid, clientes_activos);
+                    printf("Cliente promovido de cola de espera (PID %d). Clientes activos: %d\n", pid, clientes_activos);
                 } else {
                     perror("fork failed para cliente en cola");
                     close(client_socket);
@@ -423,10 +425,19 @@ void cleanup_handler(int s) {
 }
 
 
+/* Mensaje enviado al cliente cuando el servidor se cierra */
+#define MSG_SERVIDOR_CERRANDO "SERVIDOR_CERRANDO: La conexion con el servidor ha finalizado repentinamente.\n"
+
 // Handler para limpieza en procesos hijo
 void cleanup_child_handler(int s) {
     (void)s; // Silenciar warning de parámetro no usado
     log_message("Proceso hijo recibio señal de terminacion. Limpiando recursos.");
+    /* Enviar aviso al cliente antes de cerrar la conexión */
+    if (g_client_socket_hijo >= 0) {
+        send(g_client_socket_hijo, MSG_SERVIDOR_CERRANDO, strlen(MSG_SERVIDOR_CERRANDO), 0);
+        close(g_client_socket_hijo);
+        g_client_socket_hijo = -1;
+    }
     limpiar_archivos_temporales();
     exit(EXIT_SUCCESS);
 }
@@ -437,6 +448,9 @@ void manejar_cliente(int client_socket) {
     char buffer[BUFFER_SIZE];
     int bytes_read;
     char response[BUFFER_SIZE];
+    
+    /* Guardar socket para que cleanup_child_handler pueda enviar aviso al cerrar */
+    g_client_socket_hijo = client_socket;
     
     // Configurar handler de limpieza para el proceso hijo
     struct sigaction sa_child;
@@ -750,6 +764,7 @@ void manejar_cliente(int client_socket) {
     if (csv_fd >= 0) {
         close(csv_fd);
     }
+    g_client_socket_hijo = -1; /* Evitar envío en handler si señal llega tras cerrar */
     if (client_socket >= 0) {
         close(client_socket);
     }

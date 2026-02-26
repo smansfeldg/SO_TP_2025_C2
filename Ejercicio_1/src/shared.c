@@ -23,17 +23,17 @@ union semun {
 void cleanup_resources(int shm_id, int sem_id) {
     if (shm_id != -1) {
         if (shmctl(shm_id, IPC_RMID, NULL) == -1) {
-            perror("Error liberando memoria compartida");
+            perror("Error al liberar memoria compartida");
         } else {
-            printf("Memoria compartida liberada exitosamente\n");
+            printf("La memoria compartida ha sido liberada exitosamente!\n");
         }
     }
 
     if (sem_id != -1) {
         if (semctl(sem_id, 0, IPC_RMID) == -1) {
-            perror("Error liberando semáforos");
+            perror("Error al liberar semáforos");
         } else {
-            printf("Semáforos liberados exitosamente\n");
+            printf("Los semáforos han sido liberados exitosamente\n");
         }
     }
 }
@@ -47,7 +47,7 @@ void signal_handler(int sig) {
 int create_semaphore(key_t key, int num_sems) {
     int sem_id = semget(key, num_sems, IPC_CREAT | IPC_EXCL | 0666);
     if (sem_id == -1) {
-        perror("Error creando semáforos");
+        perror("Error al crear semáforos");
         return -1;
     }
 
@@ -65,7 +65,7 @@ int create_semaphore(key_t key, int num_sems) {
     arg.array = init_values;
 
     if (semctl(sem_id, 0, SETALL, arg) == -1) {
-        perror("Error inicializando semáforos");
+        perror("Error al inicializar semáforos");
         semctl(sem_id, 0, IPC_RMID);
         return -1;
     }
@@ -76,7 +76,7 @@ int create_semaphore(key_t key, int num_sems) {
 int get_semaphore(key_t key) {
     int sem_id = semget(key, 0, 0);
     if (sem_id == -1) {
-        perror("Error obteniendo semáforos");
+        perror("Error al obtener semáforos");
     }
     return sem_id;
 }
